@@ -7,6 +7,9 @@ import "leaflet/dist/leaflet.css";
 import { defaultIcon } from "./default-icon";
 import { autoIcon } from "./auto-icon";
 import { decodePolyline } from "@/utils/decode-polyline";
+import MapInitializer from "./map-initializer";
+
+type SearchResult = { display_name: string; lat: string; lon: string };
 
 export default function NavigatorMap() {
   const [dest, setDest] = useState<[number, number] | null>(null);
@@ -15,23 +18,21 @@ export default function NavigatorMap() {
     null
   );
   const [searchQuery, setSearchQuery] = useState("");
-  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
   const [locationDenied, setLocationDenied] = useState(false);
 
   const mapRef = useRef<L.Map | null>(null);
-  const markerRef = useRef<any>(null);
+  const markerRef = useRef<L.Marker | null>(null);
 
   const eventHandlers = useMemo(
     () => ({
       dragend() {
         const marker = markerRef.current;
         if (marker != null) {
-          const newPos: [number, number] = [
-            marker._latlng.lat,
-            marker._latlng.lng,
-          ];
+          const latlng = marker.getLatLng(); // método público e tipado
+          const newPos: [number, number] = [latlng.lat, latlng.lng];
           setUserPosition(newPos);
           if (dest) calculateRoute(newPos, dest);
         }
@@ -98,7 +99,7 @@ export default function NavigatorMap() {
     );
   }
 
-  const handleSelectResult = async (result: any) => {
+  const handleSelectResult = async (result: SearchResult) => {
     if (!userPosition) {
       alert("Aguarde a localização ser carregada.");
       return;
@@ -277,10 +278,8 @@ export default function NavigatorMap() {
         zoom={14}
         className="h-screen w-screen"
         scrollWheelZoom={true}
-        whenCreated={(mapInstance) => {
-          mapRef.current = mapInstance;
-        }}
       >
+        <MapInitializer onMapReady={(map) => (mapRef.current = map)} />
         <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
 
         {routeCoords.length > 0 && (

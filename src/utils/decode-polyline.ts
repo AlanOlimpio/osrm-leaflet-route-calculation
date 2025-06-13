@@ -1,14 +1,14 @@
 export function decodePolyline(str: string, precision = 6): [number, number][] {
+  const coordinates: [number, number][] = [];
+  const factor = Math.pow(10, precision);
   let index = 0,
     lat = 0,
     lng = 0,
-    coordinates: [number, number][] = [],
     shift = 0,
     result = 0,
     byte = null,
     latitude_change,
-    longitude_change,
-    factor = Math.pow(10, precision);
+    longitude_change;
   while (index < str.length) {
     shift = result = 0;
     do {
