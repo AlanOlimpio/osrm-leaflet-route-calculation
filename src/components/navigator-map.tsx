@@ -73,18 +73,19 @@ export default function NavigatorMap() {
     return decoded;
   }
 
-  function watchUserPosition(
-    dest: [number, number],
-    currentRoute: [number, number][]
-  ) {
-    if (!currentRoute || currentRoute.length < 2) return;
-    navigator.geolocation.watchPosition(
+  useEffect(() => {
+    if (typeof window === "undefined" || !navigator.geolocation || !dest)
+      return;
+
+    const watchId = navigator.geolocation.watchPosition(
       async ({ coords }) => {
         const userPoint: [number, number] = [coords.latitude, coords.longitude];
         setUserPosition(userPoint);
 
+        if (routeCoords.length < 2) return;
+
         const turfPoint = turf.point([userPoint[1], userPoint[0]]);
-        const turfLine = turf.lineString(currentRoute.map((c) => [c[1], c[0]]));
+        const turfLine = turf.lineString(routeCoords.map((c) => [c[1], c[0]]));
         const distance = turf.pointToLineDistance(turfPoint, turfLine, {
           units: "meters",
         });
@@ -94,10 +95,12 @@ export default function NavigatorMap() {
           setRouteCoords(newRoute);
         }
       },
-      (err) => console.error(err),
+      (err) => console.error("Erro ao obter localização:", err),
       { enableHighAccuracy: true, maximumAge: 1000 }
     );
-  }
+
+    return () => navigator.geolocation.clearWatch(watchId);
+  }, [routeCoords, dest]);
 
   const handleSelectResult = async (result: SearchResult) => {
     if (!userPosition) {
@@ -118,8 +121,36 @@ export default function NavigatorMap() {
 
     const route = await calculateRoute(userPosition, destCoords);
     setRouteCoords(route);
-    watchUserPosition(destCoords, route);
   };
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !navigator.geolocation || !dest)
+      return;
+
+    const watchId = navigator.geolocation.watchPosition(
+      async ({ coords }) => {
+        const userPoint: [number, number] = [coords.latitude, coords.longitude];
+        setUserPosition(userPoint);
+
+        if (routeCoords.length < 2) return;
+
+        const turfPoint = turf.point([userPoint[1], userPoint[0]]);
+        const turfLine = turf.lineString(routeCoords.map((c) => [c[1], c[0]]));
+        const distance = turf.pointToLineDistance(turfPoint, turfLine, {
+          units: "meters",
+        });
+
+        if (distance > 30) {
+          const newRoute = await calculateRoute(userPoint, dest);
+          setRouteCoords(newRoute);
+        }
+      },
+      (err) => console.error("Erro ao obter localização:", err),
+      { enableHighAccuracy: true, maximumAge: 1000 }
+    );
+
+    return () => navigator.geolocation.clearWatch(watchId);
+  }, [routeCoords, dest]);
 
   useEffect(() => {
     const delayDebounce = setTimeout(() => {
@@ -159,9 +190,7 @@ export default function NavigatorMap() {
         const origin: [number, number] = [coords.latitude, coords.longitude];
         setUserPosition(origin);
         setLocationDenied(false);
-        if (mapRef.current) {
-          mapRef.current.setView(origin, 14);
-        }
+        mapRef.current?.setView(origin, 14);
       },
       (err) => {
         console.error(err);
