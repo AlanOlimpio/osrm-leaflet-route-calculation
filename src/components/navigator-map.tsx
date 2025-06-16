@@ -1,29 +1,58 @@
 "use client";
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  Dispatch,
+  RefObject,
+  SetStateAction,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { MapContainer, TileLayer, Polyline, Marker } from "react-leaflet";
-import L from "leaflet";
+import L, { Map } from "leaflet";
 import * as turf from "@turf/turf";
 import "leaflet/dist/leaflet.css";
 import { defaultIcon } from "./default-icon";
 import { autoIcon } from "./auto-icon";
-import { decodePolyline } from "@/utils/decode-polyline";
 import MapInitializer from "./map-initializer";
+import { SearchResult } from "@/app/page";
 
-type SearchResult = { display_name: string; lat: string; lon: string };
+interface NavigatorMapPropd {
+  userPosition: [number, number] | null;
+  setUserPosition: Dispatch<SetStateAction<[number, number] | null>>;
+  routeRef: RefObject<[number, number][]>;
+  mapRef: RefObject<Map | null>;
+  calculateRoute: (
+    origin: [number, number],
+    destination: [number, number]
+  ) => Promise<[number, number][]>;
+  routeCoords: [number, number][];
+  setRouteCoords: Dispatch<SetStateAction<[number, number][]>>;
+  setSearchQuery: Dispatch<SetStateAction<string>>;
+  searchQuery: string;
+  setSearchResults: Dispatch<SetStateAction<SearchResult[]>>;
+  searchResults: SearchResult[];
+}
 
-export default function NavigatorMap() {
+export default function NavigatorMap({
+  calculateRoute,
+  mapRef,
+  routeCoords,
+  routeRef,
+  setUserPosition,
+  userPosition,
+  setRouteCoords,
+  searchQuery,
+  setSearchQuery,
+  searchResults,
+  setSearchResults,
+}: NavigatorMapPropd) {
   const [dest, setDest] = useState<[number, number] | null>(null);
-  const [routeCoords, setRouteCoords] = useState<[number, number][]>([]);
-  const [userPosition, setUserPosition] = useState<[number, number] | null>(
-    null
-  );
-  const [searchQuery, setSearchQuery] = useState("");
-  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
   const [locationDenied, setLocationDenied] = useState(false);
+  const [isRecalculating, setIsRecalculating] = useState(false);
 
-  const mapRef = useRef<L.Map | null>(null);
   const markerRef = useRef<L.Marker | null>(null);
 
   const eventHandlers = useMemo(
@@ -31,7 +60,7 @@ export default function NavigatorMap() {
       dragend() {
         const marker = markerRef.current;
         if (marker != null) {
-          const latlng = marker.getLatLng(); // método público e tipado
+          const latlng = marker.getLatLng();
           const newPos: [number, number] = [latlng.lat, latlng.lng];
           setUserPosition(newPos);
           if (dest) calculateRoute(newPos, dest);
@@ -41,66 +70,73 @@ export default function NavigatorMap() {
     [dest]
   );
 
-  async function calculateRoute(
-    origin: [number, number],
-    destination: [number, number]
-  ) {
-    const response = await fetch("/api/route", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        from: { lon: origin[1], lat: origin[0] },
-        to: { lon: destination[1], lat: destination[0] },
-      }),
+  const handleUserLocationUpdate = async (coords: GeolocationCoordinates) => {
+    const userPoint: [number, number] = [coords.latitude, coords.longitude];
+    setUserPosition(userPoint);
+
+    if (!dest || routeRef.current.length < 2) return;
+
+    if (
+      typeof coords.latitude !== "number" ||
+      typeof coords.longitude !== "number" ||
+      isNaN(coords.latitude) ||
+      isNaN(coords.longitude)
+    ) {
+      console.warn("Coordenadas inválidas recebidas:", coords);
+      return;
+    }
+
+    const turfPoint = turf.point([userPoint[1], userPoint[0]]);
+    const turfLine = turf.lineString(
+      routeRef.current.map(([lat, lon]) => [lon, lat])
+    );
+
+    const distance = turf.pointToLineDistance(turfPoint, turfLine, {
+      units: "meters",
     });
 
-    const result = await response.json();
+    if (distance > 30) {
+      setIsRecalculating(true);
+      const newRoute = await calculateRoute(userPoint, dest);
+      routeRef.current = newRoute;
+      setRouteCoords(newRoute);
+      setTimeout(() => setIsRecalculating(false), 3000);
+    } else {
+      let closestIndex = 0;
+      let minDistance = Infinity;
 
-    if (!result.routes || result.routes.length === 0) {
-      alert("Não foi possível calcular a rota.");
-      return [];
-    }
-
-    const encodedShape = result.routes[0].geometry;
-    const decoded = decodePolyline(encodedShape, 5);
-    setRouteCoords(decoded);
-
-    if (decoded.length > 0 && mapRef.current) {
-      const midIndex = Math.floor(decoded.length / 2);
-      mapRef.current.setView(decoded[midIndex], 14);
-    }
-
-    return decoded;
-  }
-
-  useEffect(() => {
-    if (typeof window === "undefined" || !navigator.geolocation || !dest)
-      return;
-
-    const watchId = navigator.geolocation.watchPosition(
-      async ({ coords }) => {
-        const userPoint: [number, number] = [coords.latitude, coords.longitude];
-        setUserPosition(userPoint);
-
-        if (routeCoords.length < 2) return;
-
-        const turfPoint = turf.point([userPoint[1], userPoint[0]]);
-        const turfLine = turf.lineString(routeCoords.map((c) => [c[1], c[0]]));
-        const distance = turf.pointToLineDistance(turfPoint, turfLine, {
+      routeRef.current.forEach(([lat, lon], idx) => {
+        const dist = turf.distance(turfPoint, turf.point([lon, lat]), {
           units: "meters",
         });
-
-        if (distance > 30) {
-          const newRoute = await calculateRoute(userPoint, dest);
-          setRouteCoords(newRoute);
+        if (dist < minDistance) {
+          minDistance = dist;
+          closestIndex = idx;
         }
+      });
+
+      const updatedRoute = [
+        userPoint,
+        ...routeRef.current.slice(closestIndex + 1),
+      ];
+      routeRef.current = updatedRoute;
+      setRouteCoords(updatedRoute);
+    }
+  };
+
+  useEffect(() => {
+    if (!navigator.geolocation || !dest) return;
+
+    const watchId = navigator.geolocation.watchPosition(
+      (position) => {
+        return handleUserLocationUpdate(position.coords);
       },
       (err) => console.error("Erro ao obter localização:", err),
       { enableHighAccuracy: true, maximumAge: 1000 }
     );
 
     return () => navigator.geolocation.clearWatch(watchId);
-  }, [routeCoords, dest]);
+  }, [dest, calculateRoute]);
 
   const handleSelectResult = async (result: SearchResult) => {
     if (!userPosition) {
@@ -124,37 +160,10 @@ export default function NavigatorMap() {
   };
 
   useEffect(() => {
-    if (typeof window === "undefined" || !navigator.geolocation || !dest)
-      return;
-
-    const watchId = navigator.geolocation.watchPosition(
-      async ({ coords }) => {
-        const userPoint: [number, number] = [coords.latitude, coords.longitude];
-        setUserPosition(userPoint);
-
-        if (routeCoords.length < 2) return;
-
-        const turfPoint = turf.point([userPoint[1], userPoint[0]]);
-        const turfLine = turf.lineString(routeCoords.map((c) => [c[1], c[0]]));
-        const distance = turf.pointToLineDistance(turfPoint, turfLine, {
-          units: "meters",
-        });
-
-        if (distance > 30) {
-          const newRoute = await calculateRoute(userPoint, dest);
-          setRouteCoords(newRoute);
-        }
-      },
-      (err) => console.error("Erro ao obter localização:", err),
-      { enableHighAccuracy: true, maximumAge: 1000 }
-    );
-
-    return () => navigator.geolocation.clearWatch(watchId);
-  }, [routeCoords, dest]);
-
-  useEffect(() => {
     const delayDebounce = setTimeout(() => {
-      if (searchQuery.length < 3) return;
+      if (!Array.isArray(searchResults) || searchQuery.length < 3) {
+        return (searchResults = []);
+      }
       setIsLoading(true);
       fetch(`/api/search?q=${searchQuery}`)
         .then((res) => res.json())
@@ -164,7 +173,6 @@ export default function NavigatorMap() {
     return () => clearTimeout(delayDebounce);
   }, [searchQuery]);
 
-  // Função para solicitar localização novamente
   function requestLocationAgain() {
     navigator.geolocation.getCurrentPosition(
       ({ coords }) => {
@@ -203,7 +211,7 @@ export default function NavigatorMap() {
   return (
     <>
       {/* Campo de busca */}
-      <div className="absolute top-4 right-4 z-[9999] w-[90%] max-w-xs">
+      <div className="absolute top-4 right-4 z-[9999] w-[80%] max-w-xs">
         <input
           type="text"
           value={searchQuery}
@@ -219,7 +227,7 @@ export default function NavigatorMap() {
               <li
                 key={idx}
                 onClick={() => handleSelectResult(result)}
-                className="cursor-pointer px-3 py-2 hover:bg-blue-100 border-b"
+                className="cursor-pointer px-3 py-2 hover:bg-blue-100 border-b text-gray-500"
               >
                 {result.display_name}
               </li>
@@ -256,7 +264,7 @@ export default function NavigatorMap() {
       {/* Botão: centralizar no usuário */}
       {userPosition && (
         <button
-          onClick={() => mapRef.current?.setView(userPosition, 14)}
+          onClick={() => mapRef.current?.setView(userPosition, 16)}
           className="absolute bottom-4 right-4 z-[9999] rounded-full bg-blue-600 px-4 py-2 text-white shadow-md hover:bg-blue-700 transition"
         >
           Centralizar
@@ -299,8 +307,13 @@ export default function NavigatorMap() {
           Não foi possível traçar a rota.
         </div>
       )}
-
+      {isRecalculating && (
+        <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-[9999] bg-yellow-100 border border-yellow-300 text-yellow-800 px-4 py-2 rounded-md shadow">
+          Saindo da rota... recalculando.
+        </div>
+      )}
       {/* Mapa */}
+
       <MapContainer
         ref={mapRef}
         center={userPosition || [-23.55, -46.63]}
