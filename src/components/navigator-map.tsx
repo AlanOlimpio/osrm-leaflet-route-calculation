@@ -11,6 +11,7 @@ import {
 import { MapContainer, TileLayer, Polyline, Marker } from "react-leaflet";
 import * as L from "leaflet";
 import * as turf from "@turf/turf";
+import useWakeLock from "@/hooks/useWakeLock";
 import "leaflet/dist/leaflet.css";
 import { defaultIcon } from "./default-icon";
 import { autoIcon } from "./auto-icon";
@@ -56,6 +57,8 @@ export default function NavigatorMap({
   const previousPosRef = useRef<[number, number] | null>(null);
   const lastBearingRef = useRef<number>(0);
   const [hasArrived, setHasArrived] = useState(false);
+
+  useWakeLock();
 
   const handleUserLocationUpdate = async (coords: GeolocationCoordinates) => {
     const userPoint: [number, number] = [coords.latitude, coords.longitude];
