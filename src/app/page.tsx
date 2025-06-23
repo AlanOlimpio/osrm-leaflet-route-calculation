@@ -44,8 +44,7 @@ export default function Page() {
       routeRef.current = decoded;
 
       if (decoded.length > 0 && mapRef.current) {
-        const midIndex = Math.floor(decoded.length / 2);
-        mapRef.current.setView(decoded[midIndex], 14);
+        mapRef.current.setView(origin, 17, { animate: true });
       }
 
       return decoded;

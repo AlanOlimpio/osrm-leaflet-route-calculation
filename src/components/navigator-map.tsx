@@ -1,15 +1,15 @@
 "use client";
+import "@/utils/leaflet-rotate-loader";
 import {
   Dispatch,
   RefObject,
   SetStateAction,
   useEffect,
-  useMemo,
   useRef,
   useState,
 } from "react";
 import { MapContainer, TileLayer, Polyline, Marker } from "react-leaflet";
-import L, { Map } from "leaflet";
+import * as L from "leaflet";
 import * as turf from "@turf/turf";
 import "leaflet/dist/leaflet.css";
 import { defaultIcon } from "./default-icon";
@@ -21,7 +21,7 @@ interface NavigatorMapPropd {
   userPosition: [number, number] | null;
   setUserPosition: Dispatch<SetStateAction<[number, number] | null>>;
   routeRef: RefObject<[number, number][]>;
-  mapRef: RefObject<Map | null>;
+  mapRef: RefObject<L.Map | null>;
   calculateRoute: (
     origin: [number, number],
     destination: [number, number]
@@ -53,38 +53,16 @@ export default function NavigatorMap({
   const [locationDenied, setLocationDenied] = useState(false);
   const [isRecalculating, setIsRecalculating] = useState(false);
 
-  const markerRef = useRef<L.Marker | null>(null);
-
-  const eventHandlers = useMemo(
-    () => ({
-      dragend() {
-        const marker = markerRef.current;
-        if (marker != null) {
-          const latlng = marker.getLatLng();
-          const newPos: [number, number] = [latlng.lat, latlng.lng];
-          setUserPosition(newPos);
-          if (dest) calculateRoute(newPos, dest);
-        }
-      },
-    }),
-    [dest]
-  );
+  const previousPosRef = useRef<[number, number] | null>(null);
+  const lastBearingRef = useRef<number>(0);
+  const [hasArrived, setHasArrived] = useState(false);
 
   const handleUserLocationUpdate = async (coords: GeolocationCoordinates) => {
     const userPoint: [number, number] = [coords.latitude, coords.longitude];
     setUserPosition(userPoint);
 
+    //  Verifica necessidade de recalcular a rota primeiro
     if (!dest || routeRef.current.length < 2) return;
-
-    if (
-      typeof coords.latitude !== "number" ||
-      typeof coords.longitude !== "number" ||
-      isNaN(coords.latitude) ||
-      isNaN(coords.longitude)
-    ) {
-      console.warn("Coordenadas inválidas recebidas:", coords);
-      return;
-    }
 
     const turfPoint = turf.point([userPoint[1], userPoint[0]]);
     const turfLine = turf.lineString(
@@ -94,6 +72,31 @@ export default function NavigatorMap({
     const distance = turf.pointToLineDistance(turfPoint, turfLine, {
       units: "meters",
     });
+    if (
+      previousPosRef &&
+      previousPosRef?.current &&
+      previousPosRef?.current[1] &&
+      previousPosRef?.current[0]
+    ) {
+      const delta = turf.distance(
+        turf.point([userPoint[1], userPoint[0]]),
+        turf.point([previousPosRef.current[1], previousPosRef.current[0]]),
+        { units: "meters" }
+      );
+      if (delta < 5) return; // está parado
+    }
+
+    const destinationPoint = turf.point([dest[1], dest[0]]);
+    const distanceToDestination = turf.distance(turfPoint, destinationPoint, {
+      units: "meters",
+    });
+    if (distanceToDestination < 15) {
+      setHasArrived(true);
+      setTimeout(() => setHasArrived(false), 4000);
+      setDest(null);
+      setRouteCoords([]);
+      return;
+    }
 
     if (distance > 30) {
       setIsRecalculating(true);
@@ -122,6 +125,28 @@ export default function NavigatorMap({
       routeRef.current = updatedRoute;
       setRouteCoords(updatedRoute);
     }
+
+    //  executa rotação com bearing
+    if (previousPosRef.current && mapRef.current && mapRef.current.setBearing) {
+      const from = turf.point([
+        previousPosRef.current[1],
+        previousPosRef.current[0],
+      ]);
+      const to = turf.point([userPoint[1], userPoint[0]]);
+      const angle = turf.bearing(from, to);
+
+      if (Math.abs(lastBearingRef.current - angle) > 10) {
+        mapRef.current.setBearing(angle * -1);
+        lastBearingRef.current = angle;
+      }
+
+      mapRef.current.setView(userPoint, 17, {
+        animate: true,
+      });
+    }
+
+    // Atualiza a posição anterior por último
+    previousPosRef.current = userPoint;
   };
 
   useEffect(() => {
@@ -129,6 +154,8 @@ export default function NavigatorMap({
 
     const watchId = navigator.geolocation.watchPosition(
       (position) => {
+        mapRef.current?.panTo(userPosition!, { animate: true });
+
         return handleUserLocationUpdate(position.coords);
       },
       (err) => console.error("Erro ao obter localização:", err),
@@ -157,6 +184,9 @@ export default function NavigatorMap({
 
     const route = await calculateRoute(userPosition, destCoords);
     setRouteCoords(route);
+    if (mapRef.current) {
+      mapRef.current.setView(userPosition, 17, { animate: true });
+    }
   };
 
   useEffect(() => {
@@ -264,7 +294,7 @@ export default function NavigatorMap({
       {/* Botão: centralizar no usuário */}
       {userPosition && (
         <button
-          onClick={() => mapRef.current?.setView(userPosition, 16)}
+          onClick={() => mapRef.current?.setView(userPosition, 17)}
           className="absolute bottom-4 right-4 z-[9999] rounded-full bg-blue-600 px-4 py-2 text-white shadow-md hover:bg-blue-700 transition"
         >
           Centralizar
@@ -281,26 +311,6 @@ export default function NavigatorMap({
         </button>
       )}
 
-      {/* Aviso para arrastar marcador */}
-      {userPosition && (
-        <div className="absolute bottom-20 left-4 z-[9999] flex items-center gap-2 bg-white px-3 py-2 rounded shadow text-gray-700 text-sm">
-          <svg
-            className="h-4 w-4 text-blue-600"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              d="M12 4v16m8-8H4"
-            />
-          </svg>
-          Arraste o marcador para ajustar sua posição
-        </div>
-      )}
-
       {/* Aviso de erro na rota */}
       {!routeCoords.length && dest && (
         <div className="absolute bottom-4 left-4 z-[9999] bg-red-100 border border-red-300 text-red-700 px-4 py-2 rounded-md shadow">
@@ -312,6 +322,12 @@ export default function NavigatorMap({
           Saindo da rota... recalculando.
         </div>
       )}
+      {hasArrived && (
+        <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-[9999] bg-green-100 border border-green-300 text-green-800 px-4 py-2 rounded-md shadow">
+          Você chegou ao destino!
+        </div>
+      )}
+
       {/* Mapa */}
 
       <MapContainer
@@ -320,6 +336,8 @@ export default function NavigatorMap({
         zoom={14}
         className="h-screen w-screen"
         scrollWheelZoom={true}
+        touchRotate={true}
+        rotate={true}
       >
         <MapInitializer onMapReady={(map) => (mapRef.current = map)} />
         <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
@@ -327,21 +345,19 @@ export default function NavigatorMap({
         {routeCoords.length > 0 && (
           <>
             <Polyline positions={routeCoords} color="blue" />
-            <Marker
-              icon={defaultIcon}
-              position={routeCoords[routeCoords.length - 1]}
-            />
+            {dest && (
+              <Marker
+                icon={defaultIcon}
+                position={routeCoords[routeCoords.length - 1]}
+              />
+            )}
           </>
         )}
 
         {userPosition && (
-          <Marker
-            draggable={true}
-            ref={markerRef}
-            icon={autoIcon}
-            position={userPosition}
-            eventHandlers={eventHandlers}
-          />
+          <>
+            <Marker icon={autoIcon} position={userPosition} draggable={false} />
+          </>
         )}
       </MapContainer>
     </>
