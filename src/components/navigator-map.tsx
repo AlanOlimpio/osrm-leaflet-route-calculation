@@ -64,8 +64,27 @@ export default function NavigatorMap({
     const userPoint: [number, number] = [coords.latitude, coords.longitude];
     setUserPosition(userPoint);
 
-    //  Verifica necessidade de recalcular a rota primeiro
     if (!dest || routeRef.current.length < 2) return;
+
+    if (
+      typeof coords.latitude !== "number" ||
+      typeof coords.longitude !== "number" ||
+      isNaN(coords.latitude) ||
+      isNaN(coords.longitude)
+    ) {
+      console.warn("Coordenadas inválidas recebidas:", coords);
+      return;
+    }
+
+    if (
+      typeof coords.latitude !== "number" ||
+      typeof coords.longitude !== "number" ||
+      isNaN(coords.latitude) ||
+      isNaN(coords.longitude)
+    ) {
+      console.warn("Coordenadas inválidas recebidas:", coords);
+      return;
+    }
 
     const turfPoint = turf.point([userPoint[1], userPoint[0]]);
     const turfLine = turf.lineString(
@@ -75,32 +94,7 @@ export default function NavigatorMap({
     const distance = turf.pointToLineDistance(turfPoint, turfLine, {
       units: "meters",
     });
-    if (
-      previousPosRef &&
-      previousPosRef?.current &&
-      previousPosRef?.current[1] &&
-      previousPosRef?.current[0]
-    ) {
-      const delta = turf.distance(
-        turf.point([userPoint[1], userPoint[0]]),
-        turf.point([previousPosRef.current[1], previousPosRef.current[0]]),
-        { units: "meters" }
-      );
-      if (delta < 5) return; // está parado
-    }
-
-    const destinationPoint = turf.point([dest[1], dest[0]]);
-    const distanceToDestination = turf.distance(turfPoint, destinationPoint, {
-      units: "meters",
-    });
-    if (distanceToDestination < 15) {
-      setHasArrived(true);
-      setTimeout(() => setHasArrived(false), 4000);
-      setDest(null);
-      setRouteCoords([]);
-      return;
-    }
-
+    //  Verifica necessidade de recalcular a rota primeiro
     if (distance > 30) {
       setIsRecalculating(true);
       const newRoute = await calculateRoute(userPoint, dest);
@@ -128,8 +122,19 @@ export default function NavigatorMap({
       routeRef.current = updatedRoute;
       setRouteCoords(updatedRoute);
     }
-
+    const destinationPoint = turf.point([dest[1], dest[0]]);
+    const distanceToDestination = turf.distance(turfPoint, destinationPoint, {
+      units: "meters",
+    });
+    if (distanceToDestination < 15) {
+      setHasArrived(true);
+      setTimeout(() => setHasArrived(false), 4000);
+      setDest(null);
+      setRouteCoords([]);
+      return;
+    }
     //  executa rotação com bearing
+
     if (previousPosRef.current && mapRef.current && mapRef.current.setBearing) {
       const from = turf.point([
         previousPosRef.current[1],

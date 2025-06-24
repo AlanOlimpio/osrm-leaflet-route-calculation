@@ -8,7 +8,7 @@ if (typeof window !== "undefined") {
   // Importa dinamicamente leaflet-rotate apenas no client
   await import("leaflet-rotate")
     .then(() => {
-      console.log("✅ leaflet-rotate carregado com sucesso");
+      console.log("O leaflet-rotate carregado com sucesso");
     })
     .catch((err) => {
       console.error("Erro ao carregar leaflet-rotate:", err);

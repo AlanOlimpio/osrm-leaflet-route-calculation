@@ -19,7 +19,7 @@ export default function useWakeLock() {
           }
         }
       } catch (err) {
-        console.error("❗ Falha ao ativar Wake Lock:", err);
+        console.error("Falha ao ativar Wake Lock:", err);
       }
     };
 
